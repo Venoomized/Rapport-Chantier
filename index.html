@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Application Rapport de Chantier</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "lucide-react": "https://esm.sh/lucide-react@0.294.0",
+            "firebase/app": "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js",
+            "firebase/auth": "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js",
+            "firebase/firestore": "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; background-color: #f8fafc; }
+
+        /* --- GESTION IMPRESSION --- */
+        @media print {
+            body > * { display: none !important; }
+            .modal-root { display: flex !important; position: absolute !important; top: 0 !important; left: 0 !important; width: 100% !important; height: auto !important; background: white !important; z-index: 9999 !important; }
+            .modal-content { box-shadow: none !important; border: none !important; width: 100% !important; max-width: none !important; padding: 0 !important; margin: 0 !important; }
+            .no-print, button, nav, header { display: none !important; }
+            @page { margin: 1.5cm; size: A4; }
+            body { font-family: 'Helvetica', sans-serif; -webkit-print-color-adjust: exact; background: white !important; }
+            .text-gray-400, .text-blue-600, .text-gray-500 { color: black !important; }
+            .bg-blue-50, .bg-gray-50 { background-color: transparent !important; }
+            .border-print { border-bottom: 1px solid black !important; }
+            .print-visible { display: block !important; }
+        }
+        .print-visible { display: none; }
+    </style>
+</head>
+<body>
+    
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect } from 'react';
+        import ReactDOM from 'react-dom/client';
+        import { initializeApp } from 'firebase/app';
+        import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+        import { getFirestore, collection, addDoc, serverTimestamp, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
+        import { Calendar, User, Clock, Package, MapPin, Camera, CheckCircle2, Plus, Minus, Trash2, ChevronRight, Loader2, LayoutDashboard, Search, Tag, Users, Printer, X, AlertTriangle, FileBarChart, Wallet, Calculator, Coins, Image as ImageIcon } from 'lucide-react';
+
+        // --- CONFIGURATION FIREBASE ---
+        // Si vous laissez "TA_CLE_API_ICI", l'application passera automatiquement en MODE DÉMO (Sauvegarde locale)
+        const firebaseConfig = {
+            apiKey: "TA_CLE_API_ICI",
+            authDomain: "TON_PROJET.firebaseapp.com",
+            projectId: "TON_PROJET_ID",
+            storageBucket: "TON_PROJET.appspot.com",
+            messagingSenderId: "TON_ID_MESSAGERIE",
+            appId: "TON_APP_ID"
+        };
+
+        let app, auth, db;
+        const isDemoMode = !firebaseConfig.apiKey || firebaseConfig.apiKey.includes("TA_CLE");
+
+        if (!isDemoMode) {
+            try {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+            } catch (e) { console.error("Erreur Init Firebase", e); }
+        }
+
+        const appId = 'mon-chantier-app'; 
+
+        // --- DONNEES ---
+        const HOURLY_RATES = { 'Sanitaire': 125, 'Peinture': 90, 'Nettoyage': 65, 'Autre': 85 };
+        const TRAVEL_FEES = {
+            'Zone 1': { fee: 60, label: '0 - 5 km' },
+            'Zone 2': { fee: 90, label: '5 - 30 km' },
+            'Zone 3': { fee: 120, label: '+ 30 km' }
+        };
+        const TECHNICIANS = ["André", "Diogo", "Magda", "Mario"];
+        const MARGIN_MULTIPLIER = 1.20;
+        const VAUD = { PAT_AVS: 0.053, PAT_AC: 0.011, PAT_AF: 0.0295, PAT_ADM: 0.0015, PAT_LAA: 0.025, EMP_TOT: 0.0785 };
+
+        const getLPPRate = (age) => {
+            if (age < 25) return 0.005; if (age < 35) return 0.07; if (age < 45) return 0.10; if (age < 55) return 0.15; return 0.18;
+        };
+
+        // --- FACTURE CLIENT (INDIVIDUELLE) ---
+        const InvoiceModal = ({ report, logo, onClose }) => (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 modal-root">
+                <div className="bg-white w-full max-w-2xl rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh] modal-content text-left">
+                    <div className="p-6 border-b flex justify-between items-center bg-gray-50 no-print">
+                        <h2 className="font-black text-xl text-gray-800 uppercase">Facture Client</h2>
+                        <button type="button" onClick={onClose} className="p-2 bg-white rounded-full shadow-sm"><X size={20}/></button>
+                    </div>
+                    <div className="p-10 overflow-y-auto bg-white flex-1 text-gray-800 text-left print:p-0">
+                        <div className="flex justify-between mb-12 items-start">
+                            <div className="w-1/2">
+                                {logo ? <img src={logo} className="h-24 object-contain mb-4" /> : <div className="h-16 w-16 bg-gray-100 flex items-center justify-center text-xs text-gray-400 mb-4 border">Logo</div>}
+                                <div className="text-sm">
+                                    <p className="font-bold uppercase">Votre Entreprise</p>
+                                    <p>Chemin du Chantier 12, 1000 Lausanne</p>
+                                </div>
+                            </div>
+                            <div className="text-right w-1/2">
+                                <h1 className="text-3xl font-black mb-2">FACTURE</h1>
+                                <p className="font-bold text-gray-500">N° {report.id?.substring(0,6).toUpperCase()}</p>
+                                <p className="text-gray-500">Date: {new Date(report.date).toLocaleDateString('fr-CH')}</p>
+                                <div className="mt-6 border p-4 text-left rounded bg-gray-50 print:bg-white print:border-black">
+                                    <p className="text-[10px] font-bold text-gray-400 uppercase">Facturé à :</p>
+                                    <p className="text-xl font-bold">{report.clientName}</p>
+                                </div>
+                            </div>
+                        </div>
+                        <table className="w-full mb-10 text-sm">
+                            <thead>
+                                <tr className="border-b-2 border-black font-bold uppercase text-xs text-left">
+                                    <th className="py-2 w-1/2">Description</th>
+                                    <th className="py-2 text-center">Qté</th>
+                                    <th className="py-2 text-right">Prix</th>
+                                    <th className="py-2 text-right">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr className="border-b border-gray-100 border-print">
+                                    <td className="py-4"><span className="font-bold block text-base">{report.taskType}</span><span className="text-xs text-gray-500 italic print:text-black">Tech: {report.technician}</span></td>
+                                    <td className="py-4 text-center">{report.hours}</td>
+                                    <td className="py-4 text-right">{report.hourlyRate}.-</td>
+                                    <td className="py-4 text-right font-bold">{report.laborTotal?.toFixed(2)}.-</td>
+                                </tr>
+                                {report.materialsCost > 0 && (
+                                    <tr className="border-b border-gray-100 border-print">
+                                        <td className="py-4"><span className="font-bold block">Matériel</span><span className="text-xs text-gray-500 italic print:text-black">{report.materialsList}</span></td>
+                                        <td className="py-4 text-center">1</td>
+                                        <td className="py-4 text-right">{(report.materialsCost * 1.2).toFixed(2)}.-</td>
+                                        <td className="py-4 text-right font-bold">{(report.materialsCost * 1.2).toFixed(2)}.-</td>
+                                    </tr>
+                                )}
+                                <tr className="border-print">
+                                    <td className="py-4 font-bold">Déplacement ({report.zone})</td>
+                                    <td className="py-4 text-center">1</td>
+                                    <td className="py-4 text-right">{report.travelFee}.-</td>
+                                    <td className="py-4 text-right font-bold">{report.travelFee?.toFixed(2)}.-</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div className="flex justify-end mb-12">
+                            <div className="w-1/2 text-right">
+                                <div className="flex justify-between py-1 border-b"><span className="font-bold">Total HT</span><span>{report.grandTotal?.toFixed(2)}</span></div>
+                                <div className="flex justify-between py-1 border-b"><span>TVA (8.1%)</span><span>{(report.grandTotal * 0.081).toFixed(2)}</span></div>
+                                <div className="flex justify-between py-2 border-b-2 border-black mt-2"><span className="font-black text-xl">Total TTC</span><span className="font-black text-xl">{(report.grandTotal * 1.081).toFixed(2)} CHF</span></div>
+                            </div>
+                        </div>
+                        <div className="print-visible mt-auto pt-8 border-t border-black text-center text-xs">
+                            <p>Merci de votre confiance. Paiement à 30 jours net. IBAN: CHXX 0000 0000 0000 0000 0</p>
+                        </div>
+                    </div>
+                    <div className="p-6 border-t bg-gray-50 no-print">
+                        <button type="button" onClick={() => setTimeout(()=>window.print(),100)} className="w-full bg-blue-900 text-white font-black py-4 rounded-xl flex items-center justify-center gap-2"><Printer size={20}/> Imprimer Facture Client</button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        // --- LISTE GLOBALE (FIDUCIAIRE) ---
+        const SummaryModal = ({ reports, onClose }) => {
+            const totalCA = reports.reduce((a, c) => a + (c.grandTotal || 0), 0);
+            return (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[120] flex items-center justify-center p-4 modal-root">
+                    <div className="bg-white w-full max-w-4xl rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh] modal-content text-left">
+                        <div className="p-6 border-b flex justify-between items-center bg-gray-50 no-print">
+                            <h2 className="font-black text-xl text-gray-800 uppercase">Pour Fiduciaire</h2>
+                            <button type="button" onClick={onClose} className="p-2 bg-white rounded-full shadow-sm"><X size={20}/></button>
+                        </div>
+                        <div className="p-8 overflow-y-auto bg-white flex-1 text-gray-800 text-left print:overflow-visible">
+                            <h1 className="text-2xl font-black text-blue-600 uppercase mb-6 text-left print:text-black">Rapport Global</h1>
+                            <table className="w-full text-left text-sm border-collapse">
+                                <thead><tr className="border-b-2 border-gray-100 text-[10px] font-black uppercase text-gray-400 text-left print:text-black print:border-black"><th className="py-3">Date</th><th className="py-3">Client</th><th className="py-3 text-right">Total HT</th></tr></thead>
+                                <tbody>{reports.map((r, i) => (<tr key={i} className="border-b border-gray-50 border-print"><td className="py-3">{r.date}</td><td className="py-3">{r.clientName}</td><td className="py-3 text-right font-bold tabular-nums">{r.grandTotal?.toFixed(2)} .-</td></tr>))}</tbody>
+                            </table>
+                            <div className="flex justify-end mt-10"><div className="w-64 bg-blue-900 text-white p-6 rounded-3xl text-right shadow-xl print:bg-white print:text-black print:border print:border-black"><p className="text-[10px] uppercase opacity-60 font-black mb-1 print:text-black">Total Cumulé</p><p className="text-2xl font-black tabular-nums">{totalCA.toFixed(2)} .-</p></div></div>
+                        </div>
+                        <div className="p-6 border-t bg-gray-50 no-print"><button type="button" onClick={() => setTimeout(()=>window.print(),100)} className="w-full bg-blue-600 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2"><Printer size={20}/> Imprimer Liste</button></div>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('form'); 
+            const [submitted, setSubmitted] = useState(false);
+            const [isSaving, setIsSaving] = useState(false);
+            const [reports, setReports] = useState([]);
+            const [selectedReport, setSelectedReport] = useState(null);
+            const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+            const [logo, setLogo] = useState(localStorage.getItem('companyLogo'));
+            const [salaryEmployee, setSalaryEmployee] = useState(TECHNICIANS[0]);
+            const [employeeAge, setEmployeeAge] = useState(30);
+            const [netSalary, setNetSalary] = useState(0);
+            const [formData, setFormData] = useState({ date: new Date().toISOString().split('T')[0], clientName: '', technician: 'André', taskType: 'Sanitaire', hours: 0, materialsList: '', materialsCost: 0, zone: 'Zone 1', photos: [] });
+
+            useEffect(() => {
+                const init = async () => {
+                    if(!isDemoMode && auth) {
+                        try { await signInAnonymously(auth); } catch(e){}
+                        onAuthStateChanged(auth, setUser);
+                    } else {
+                        // Chargement Demo depuis LocalStorage
+                        const savedReports = localStorage.getItem('demo_reports');
+                        if(savedReports) setReports(JSON.parse(savedReports));
+                    }
+                };
+                init();
+            }, []);
+
+            useEffect(() => {
+                if (isDemoMode || !user || !db) return;
+                const reportsRef = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+                return onSnapshot(reportsRef, (snapshot) => {
+                    const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setReports(docs.sort((a, b) => new Date(b.date) - new Date(a.date)));
+                });
+            }, [user]);
+
+            const handleLogoUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        setLogo(reader.result);
+                        localStorage.setItem('companyLogo', reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const currentRate = HOURLY_RATES[formData.taskType] || 85;
+            const laborTotal = formData.hours * currentRate;
+            const materialsTotal = formData.materialsCost * MARGIN_MULTIPLIER;
+            const travelFee = TRAVEL_FEES[formData.zone]?.fee || 0;
+            const grandTotal = laborTotal + materialsTotal + travelFee;
+
+            const lppRate = getLPPRate(employeeAge);
+            const lppShare = lppRate / 2;
+            const estGross = netSalary > 0 ? netSalary / (1 - (VAUD.EMP_TOT + lppShare)) : 0;
+            const totalCost = estGross * (1 + (VAUD.PAT_AVS + VAUD.PAT_AC + VAUD.PAT_AF + VAUD.PAT_ADM + VAUD.PAT_LAA + lppShare));
+
+            const adjustHours = (amount) => setFormData(p => ({ ...p, hours: Math.max(0, p.hours + amount) }));
+            const handleInputChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.name === 'hours' || e.target.name === 'materialsCost' ? parseFloat(e.target.value) || 0 : e.target.value }));
+            const handlePhotoUpload = (e) => setFormData(prev => ({ ...prev, photos: [...prev.photos, ...Array.from(e.target.files).map(f => URL.createObjectURL(f))].slice(0, 5) }));
+            const removePhoto = (i) => setFormData(p => ({ ...p, photos: p.photos.filter((_, idx) => idx !== i) }));
+            
+            const handleSubmit = async (e) => { 
+                e.preventDefault(); 
+                if (!formData.clientName || formData.hours <= 0) return alert("Nom et Heures requis."); 
+                setIsSaving(true); 
+                
+                const newReport = { ...formData, hourlyRate: currentRate, travelFee, laborTotal, materialsTotal, grandTotal, createdAt: new Date(), userId: user?.uid || 'demo-user', id: 'DEMO-' + Date.now().toString().slice(-6) };
+                
+                if (isDemoMode) {
+                    // SAUVEGARDE LOCALE (MODE DEMO)
+                    const updatedReports = [newReport, ...reports];
+                    setReports(updatedReports);
+                    localStorage.setItem('demo_reports', JSON.stringify(updatedReports));
+                    setSubmitted(true);
+                    setIsSaving(false);
+                    setFormData(p => ({ ...p, clientName: '', hours: 0, materialsList: '', materialsCost: 0, photos: [] }));
+                } else {
+                    // SAUVEGARDE FIREBASE
+                    try { 
+                        const { photos, ...dataToSave } = formData;
+                        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'reports'), { ...dataToSave, hourlyRate: currentRate, travelFee, laborTotal, materialsTotal, grandTotal, createdAt: serverTimestamp(), userId: user?.uid }); 
+                        setSubmitted(true); 
+                        setFormData(p => ({ ...p, clientName: '', hours: 0, materialsList: '', materialsCost: 0, photos: [] }));
+                    } catch (err) { alert("Erreur: " + err.message); } finally { setIsSaving(false); } 
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-50 font-sans antialiased text-gray-900 overflow-x-hidden text-left">
+                
+                <header className="bg-blue-600 p-8 rounded-b-[3rem] shadow-xl text-white mb-6 relative overflow-hidden text-left no-print">
+                    <div className="flex justify-between items-center relative z-10">
+                    <div><h1 className="text-2xl font-black tracking-tight uppercase">{view === 'form' ? 'Nouveau Rapport' : view === 'dashboard' ? 'Statistiques' : 'Calcul Salaire'}</h1><p className="text-blue-100 text-[9px] font-bold uppercase tracking-[0.2em] opacity-80 mt-1">Canton de Vaud {isDemoMode && "(Mode Démo)"}</p></div>
+                    <div className="relative group">
+                         <label className="bg-white/20 p-3 rounded-2xl border border-white/20 backdrop-blur-md cursor-pointer hover:bg-white/30 transition-all flex items-center justify-center w-12 h-12 overflow-hidden">
+                            {logo ? <img src={logo} className="w-full h-full object-cover" /> : <ImageIcon size={20} />}
+                            <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                        </label>
+                    </div>
+                    </div>
+                    <div className="absolute -right-20 -top-20 w-64 h-64 bg-white/10 rounded-full blur-[100px]"></div>
+                </header>
+
+                <main className="max-w-xl mx-auto px-4 pb-32 no-print text-left">
+                    {submitted ? (
+                    <div className="text-center py-20 animate-in zoom-in duration-500 px-6">
+                        <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-8 shadow-xl border-4 border-white"><CheckCircle2 className="text-green-600 w-12 h-12" /></div>
+                        <h2 className="text-2xl font-black text-gray-800 mb-6 uppercase">Enregistré !</h2>
+                        <button type="button" onClick={() => {setSubmitted(false); setView('form');}} className="w-full bg-blue-600 text-white font-black py-5 rounded-[2rem] shadow-2xl text-lg uppercase active:scale-95 transition-all">Nouveau Chantier</button>
+                    </div>
+                    ) : view === 'salary' ? (
+                    <div className="space-y-4 animate-in fade-in duration-300">
+                        <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 text-center flex flex-col items-center">
+                        <h3 className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-6 flex items-center justify-center gap-2"><User size={12} className="text-blue-500" /> Profil Employé</h3>
+                        <div className="grid grid-cols-2 gap-3 mb-6 w-full max-w-[300px]">
+                            {TECHNICIANS.map(tech => (<button key={tech} type="button" onClick={() => setSalaryEmployee(tech)} className={`py-3 rounded-xl text-xs font-bold border transition-all ${salaryEmployee === tech ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-gray-50 border-gray-100 text-gray-400'}`}>{tech}</button>))}
+                        </div>
+                        <div className="w-full px-2">
+                            <label className="text-[10px] font-black text-gray-400 uppercase block text-left ml-2 mb-1">Âge</label>
+                            <div className="bg-gray-50 rounded-2xl p-4 flex items-center justify-center gap-6">
+                            <button type="button" onClick={()=>setEmployeeAge(Math.max(18, employeeAge-1))} className="w-10 h-10 bg-white rounded-full shadow-sm text-blue-600 flex items-center justify-center"><Minus size={18}/></button>
+                            <span className="text-2xl font-black text-gray-800">{employeeAge} ans</span>
+                            <button type="button" onClick={()=>setEmployeeAge(Math.min(65, employeeAge+1))} className="w-10 h-10 bg-white rounded-full shadow-sm text-blue-600 flex items-center justify-center"><Plus size={18}/></button>
+                            </div>
+                        </div>
+                        </div>
+                        <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 text-center flex flex-col items-center">
+                        <h3 className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-6 flex items-center justify-center gap-2"><Wallet size={12} className="text-blue-500" /> Salaire NET versé</h3>
+                        <div className="bg-gray-50 rounded-2xl border border-transparent focus-within:border-blue-500 w-full h-16 flex items-center overflow-hidden">
+                            <input type="number" placeholder="CHF" value={netSalary || ''} onChange={(e) => setNetSalary(parseFloat(e.target.value) || 0)} className="w-full h-full bg-transparent border-0 font-bold text-gray-800 text-center outline-none text-2xl" />
+                        </div>
+                        </div>
+                        <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100">
+                        <h3 className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-6 flex items-center gap-2"><Calculator size={12} className="text-blue-500" /> Coût Entreprise (Vaud)</h3>
+                        <div className="space-y-4">
+                            <div className="flex justify-between items-center pb-3 border-b border-gray-50"><span className="text-sm font-bold text-gray-500">Salaire BRUT estimé</span><span className="font-black text-gray-800 tabular-nums">{estGross.toFixed(2)} .-</span></div>
+                            <div className="space-y-2">
+                            <div className="flex justify-between items-center text-sm"><span className="text-gray-500">AVS / AI / APG</span><span className="font-bold text-gray-700">{(estGross * VAUD.PAT_AVS).toFixed(2)} .-</span></div>
+                            <div className="flex justify-between items-center text-sm"><span className="text-gray-500">Chômage AC</span><span className="font-bold text-gray-700">{(estGross * VAUD.PAT_AC).toFixed(2)} .-</span></div>
+                            <div className="flex justify-between items-center text-sm"><span className="text-gray-500">Alloc. Familiales</span><span className="font-bold text-gray-700">{(estGross * VAUD.PAT_AF).toFixed(2)} .-</span></div>
+                            <div className="flex justify-between items-center text-sm"><span className="text-gray-500">LPP (Prévoyance)</span><span className="font-bold text-gray-700">{(estGross * lppShare).toFixed(2)} .-</span></div>
+                            <div className="flex justify-between items-center text-sm"><span className="text-gray-500">Accident (LAA)</span><span className="font-bold text-gray-700">{(estGross * VAUD.PAT_LAA).toFixed(2)} .-</span></div>
+                            <div className="flex justify-between items-center text-sm"><span className="text-gray-500">Frais Admin</span><span className="font-bold text-gray-700">{(estGross * VAUD.PAT_ADM).toFixed(2)} .-</span></div>
+                            </div>
+                            <div className="pt-4"><div className="bg-blue-600 text-white p-6 rounded-[2rem] shadow-xl"><p className="text-[10px] font-black uppercase opacity-60 mb-1">Coût Total Entreprise</p><p className="text-3xl font-black tabular-nums text-right">{totalCost.toFixed(2)} .-</p></div></div>
+                        </div>
+                        </div>
+                    </div>
+                    ) : view === 'form' ? (
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 overflow-hidden text-center flex flex-col items-center">
+                        <h3 className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-6 flex items-center justify-center gap-2"><User size={12} className="text-blue-500" /> Identification</h3>
+                        <div className="grid grid-cols-2 gap-3 mb-8 w-full max-w-[300px]">
+                            {TECHNICIANS.map(tech => (<button key={tech} type="button" onClick={() => setFormData(p => ({...p, technician: tech}))} className={`py-3 rounded-xl text-xs font-bold border transition-all ${formData.technician === tech ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-gray-50 border-gray-100 text-gray-400'}`}>{tech}</button>))}
+                        </div>
+                        <div className="w-full space-y-4 max-w-full px-2">
+                            <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase block text-left ml-2">Date du jour</label><div className="bg-gray-50 rounded-2xl border border-transparent focus-within:border-blue-500 flex justify-center items-center w-full h-14"><input type="date" name="date" value={formData.date} onChange={handleInputChange} className="bg-transparent border-0 font-bold text-gray-700 text-center outline-none w-full text-lg" style={{ textAlignLast: 'center' }} /></div></div>
+                            <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase block text-left ml-2">Nom du Client</label><div className="bg-gray-50 rounded-2xl border border-transparent focus-within:border-blue-500 w-full h-14 overflow-hidden"><input type="text" name="clientName" placeholder="Ex: Mme Dupont" value={formData.clientName} onChange={handleInputChange} className="w-full h-full bg-transparent border-0 font-bold text-gray-800 text-center outline-none text-lg" /></div></div>
+                        </div>
+                        </div>
+
+                        <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                        <div className="flex justify-between items-center mb-6 px-1">
+                            <h3 className="text-gray-400 text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Clock size={12} className="text-blue-500" /> Temps & Tâche</h3>
+                            <span className="bg-blue-600 text-white text-[10px] font-black px-3 py-1 rounded-full shadow-lg uppercase">{currentRate}.-</span>
+                        </div>
+                        <div className="space-y-6 px-2">
+                            <div className="bg-gray-50 rounded-2xl overflow-hidden border border-transparent focus-within:border-blue-500"><select name="taskType" value={formData.taskType} onChange={handleInputChange} className="w-full px-4 py-4 bg-transparent border-0 font-bold text-center appearance-none outline-none text-lg">{Object.keys(HOURLY_RATES).map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                            <div className="flex items-center justify-center gap-8 bg-blue-50/40 rounded-[2.5rem] p-4 border border-blue-100/50"><button type="button" onClick={() => adjustHours(-0.5)} className="w-14 h-14 flex items-center justify-center bg-white rounded-2xl shadow-sm text-blue-600 active:scale-90 transition-all border border-blue-100"><Minus size={22} strokeWidth={3}/></button><div className="text-center min-w-[70px]"><span className="text-4xl font-black text-blue-700 block leading-none tabular-nums">{formData.hours.toFixed(1)}</span><span className="text-[10px] font-black text-blue-400 uppercase mt-1">Heures</span></div><button type="button" onClick={() => adjustHours(0.5)} className="w-14 h-14 flex items-center justify-center bg-blue-600 rounded-2xl shadow-md text-white active:scale-90 transition-all"><Plus size={22} strokeWidth={3}/></button></div>
+                        </div>
+                        </div>
+
+                        <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                        <h3 className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-4 px-1"><Package size={12} className="text-blue-500 inline mr-2" /> Matériel utilisé</h3>
+                        <div className="space-y-4 px-2">
+                            <textarea name="materialsList" placeholder="Détail des fournitures..." rows="2" value={formData.materialsList} onChange={handleInputChange} className="w-full px-4 py-4 bg-gray-50 border-0 rounded-2xl font-medium text-center outline-none placeholder:text-gray-300" />
+                            <div className="grid grid-cols-[3.5rem_1fr_3.5rem] items-center bg-gray-50 rounded-2xl border border-transparent focus-within:border-blue-500 overflow-hidden"><span className="text-gray-400 font-bold text-xs text-center">CHF</span><input type="number" name="materialsCost" placeholder="0.00" value={formData.materialsCost || ''} onChange={handleInputChange} className="w-full py-4 bg-transparent border-0 font-bold text-center outline-none text-lg tabular-nums" /><span className="text-green-600 font-black text-[9px] text-center tracking-tighter uppercase">+20%</span></div>
+                        </div>
+                        </div>
+
+                        <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 text-center">
+                        <h3 className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-4 flex justify-center items-center gap-2"><MapPin size={12} className="text-blue-500" /> Zone de déplacement</h3>
+                        <div className="grid grid-cols-3 gap-2 px-1">{Object.entries(TRAVEL_FEES).map(([z, data]) => (<button key={z} type="button" onClick={() => setFormData(p => ({...p, zone: z}))} className={`py-4 rounded-2xl border transition-all text-center ${formData.zone === z ? 'bg-blue-600 border-blue-600 text-white shadow-lg scale-105' : 'bg-gray-50 border-gray-100 text-gray-400'}`}>{/* CONTENU BOUTON ZONE */}<div className="text-[10px] font-black uppercase">{z}</div><div className="text-[8px] font-bold opacity-80 uppercase">{data.label}</div><div className="text-sm font-black mt-1">{data.fee}.-</div></button>))}</div>
+                        </div>
+
+                        <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                        <h3 className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-4 px-2 flex items-center gap-2"><Camera size={12} className="text-blue-500 inline mr-2" /> Photos</h3>
+                        <div className="grid grid-cols-4 gap-2 px-2">{formData.photos.map((p, i) => (<div key={i} className="relative aspect-square"><img src={p} className="w-full h-full object-cover rounded-xl border border-gray-100 shadow-sm" alt="" /><button type="button" onClick={() => removePhoto(i)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-1 shadow-md active:scale-75 transition-all"><X size={10}/></button></div>))}{formData.photos.length < 5 && (<label className="aspect-square bg-blue-50 border-2 border-dashed border-blue-100 rounded-xl flex items-center justify-center cursor-pointer hover:bg-blue-100 transition-colors"><Camera className="text-blue-400" size={24} /><input type="file" accept="image/*" multiple onChange={handlePhotoUpload} className="hidden" /></label>)}</div>
+                        </div>
+
+                        <div className="flex flex-col items-center justify-center py-12 px-2 w-full"><div className="w-full bg-blue-900 text-white p-6 rounded-[2.5rem] shadow-2xl flex justify-between items-center border border-white/10 max-w-full"><div className="flex flex-col text-left"><span className="text-[10px] opacity-60 font-black uppercase tracking-tighter">Total Facture HT</span><span className="text-3xl font-black tabular-nums">{grandTotal.toFixed(2)} .-</span></div><button type="submit" disabled={isSaving} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-4 rounded-[1.5rem] font-black text-sm flex items-center gap-2 shadow-xl active:scale-95 transition-all uppercase">{isSaving ? <Loader2 className="animate-spin" size={18} /> : <>VALIDER <ChevronRight size={18} /></>}</button></div></div>
+                    </form>
+                    ) : (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 text-left no-print">
+                        <div className="grid grid-cols-2 gap-4 text-center">
+                        <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-100"><p className="text-gray-400 text-[10px] font-black uppercase mb-1">CA Total</p><p className="text-2xl font-black text-blue-600 tabular-nums">{reports.reduce((a,c) => a+(c.grandTotal||0),0).toFixed(2)} .-</p></div>
+                        <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-100"><p className="text-gray-400 text-[10px] font-black uppercase mb-1">Missions</p><p className="text-2xl font-black text-gray-800 tabular-nums">{reports.length}</p></div>
+                        </div>
+                        <div className="space-y-4 px-1">
+                            {reports.map((r) => (
+                                <div key={r.id} onClick={() => setSelectedReport(r)} className="bg-white p-6 rounded-[2.5rem] shadow-sm flex justify-between items-center border border-transparent hover:border-blue-100 cursor-pointer text-left transition-all active:scale-[0.98]">
+                                    <div className="flex gap-4 items-center text-left">
+                                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${r.taskType === 'Sanitaire' ? 'bg-blue-50 text-blue-500' : 'bg-emerald-50 text-emerald-500'}`}><Tag size={24} /></div>
+                                        <div className="text-left"><h4 className="font-black text-gray-800 text-lg leading-tight text-left">{r.clientName}</h4><div className="flex items-center gap-1 mt-1 text-left"><span className="text-[9px] bg-blue-100 text-blue-600 font-black px-2 py-0.5 rounded uppercase">{r.technician}</span><span className="text-[9px] bg-gray-100 text-gray-500 font-black px-2 py-0.5 rounded uppercase">{r.taskType}</span></div></div>
+                                    </div>
+                                    <div className="text-right text-left"><p className="font-black text-blue-600 text-lg tabular-nums">{r.grandTotal?.toFixed(2)} .-</p><p className="text-[10px] text-gray-400 font-black uppercase text-right tracking-tighter">{r.date}</p></div>
+                                </div>
+                            ))}
+                        </div>
+                        <button type="button" onClick={() => setIsSummaryOpen(true)} className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2"><FileBarChart size={20}/> Historique Comptable</button>
+                    </div>
+                    )}
+                </main>
+
+                {isSummaryOpen && <SummaryModal reports={reports} onClose={() => setIsSummaryOpen(false)} />}
+                {selectedReport && <InvoiceModal report={selectedReport} logo={logo} onClose={() => setSelectedReport(null)} />}
+
+                <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t border-gray-100 p-5 flex justify-around items-center z-50 shadow-2xl rounded-t-[2.5rem] no-print">
+                    <button type="button" onClick={() => {setView('form'); setSubmitted(false)}} className={`flex flex-col items-center gap-1.5 py-2 px-6 rounded-2xl transition-all duration-300 ${view === 'form' ? 'text-blue-600 bg-blue-50 font-black shadow-inner border border-blue-100' : 'text-gray-300 font-bold active:scale-95'}`}><Plus size={24} /><span className="text-[9px] uppercase tracking-widest font-black">Saisie</span></button>
+                    <button type="button" onClick={() => {setView('dashboard'); setSubmitted(false)}} className={`flex flex-col items-center gap-1.5 py-2 px-6 rounded-2xl transition-all duration-300 ${view === 'dashboard' ? 'text-blue-600 bg-blue-50 font-black shadow-inner border border-blue-100' : 'text-gray-300 font-bold active:scale-95'}`}><LayoutDashboard size={24} /><span className="text-[9px] uppercase tracking-widest font-black">Historique</span></button>
+                    <button type="button" onClick={() => {setView('salary'); setSubmitted(false)}} className={`flex flex-col items-center gap-1.5 py-2 px-6 rounded-2xl transition-all duration-300 ${view === 'salary' ? 'text-blue-600 bg-blue-50 font-black shadow-inner border border-blue-100' : 'text-gray-300 font-bold active:scale-95'}`}><Coins size={24} /><span className="text-[9px] uppercase tracking-widest font-black">Salaire</span></button>
+                </nav>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+
+
