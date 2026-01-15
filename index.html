@@ -24,37 +24,32 @@
     <style>
         body { margin: 0; padding: 0; background-color: #f8fafc; overflow-x: hidden; }
 
-        /* --- RÉGLAGES IMPRESSION ULTRA-FIABLES --- */
+        /* --- RÉGLAGES IMPRESSION --- */
         @media print {
-            /* 1. On cache tout ce qui est dans le body */
-            body * { visibility: hidden !important; }
-            
-            /* 2. On rend visible uniquement la modale et ses enfants */
-            .modal-print-area, .modal-print-area * {
-                visibility: visible !important;
+            body * { visibility: hidden; }
+            .modal-print-area, .modal-print-area * { visibility: visible !important; }
+
+            body, html, #root {
+                width: 100%; height: 100%; overflow: visible !important;
+                background: white !important; margin: 0 !important; padding: 0 !important;
             }
 
-            /* 3. On positionne la zone d'impression tout en haut à gauche */
             .modal-print-area {
-                position: absolute !important;
-                left: 0 !important;
-                top: 0 !important;
-                width: 100% !important;
-                margin: 0 !important;
-                padding: 0 !important;
-                background: white !important;
-                display: block !important;
+                position: absolute !important; left: 0 !important; top: 0 !important;
+                width: 100% !important; height: auto !important; margin: 0 !important; padding: 0 !important;
+                background: white !important; overflow: visible !important;
+                max-height: none !important; max-width: none !important;
+                border-radius: 0 !important; box-shadow: none !important;
+                transform: none !important; display: block !important; border: none !important;
             }
 
-            /* 4. On cache les boutons et éléments d'interface à l'intérieur de la facture */
             .no-print { display: none !important; }
+            .print-text-black { color: black !important; }
+            .print-border-black { border-color: black !important; }
+            .print-bg-white { background: white !important; color: black !important; }
+            tr { page-break-inside: avoid; }
             
-            @page { size: A4 portrait; margin: 1cm; }
-            
-            /* Contraste maximum pour l'impression */
-            .text-black-force { color: black !important; }
-            .bg-white-force { background: white !important; }
-            .border-black-force { border-color: black !important; border-style: solid !important; }
+            @page { size: A4 portrait; margin: 1.5cm; }
         }
     </style>
 </head>
@@ -70,19 +65,18 @@
         import { getFirestore, collection, addDoc, updateDoc, serverTimestamp, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
         import { Calendar, User, Clock, Package, MapPin, Camera, CheckCircle2, Plus, Minus, Trash2, ChevronRight, Loader2, LayoutDashboard, Search, Tag, Users, Printer, X, AlertTriangle, FileBarChart, Wallet, Calculator, Coins, Edit, Image as ImageIcon } from 'lucide-react';
 
-        // --- 1. CONFIGURATION LOGO FIXE ---
+        // --- CONFIGURATION LOGO ---
         const LOGO_URL = "https://cdn-icons-png.flaticon.com/512/1048/1048950.png"; 
 
-        // --- 2. CONFIGURATION FIREBASE ---
+        // --- CONFIGURATION FIREBASE ---
         const firebaseConfig = {
-  apiKey: "AIzaSyBxmAa40ba2Kk0g2ToI-FZHY22dK36aK-A",
-  authDomain: "rapport-chantier.firebaseapp.com",
-  projectId: "rapport-chantier",
-  storageBucket: "rapport-chantier.firebasestorage.app",
-  messagingSenderId: "83294748865",
-  appId: "1:83294748865:web:94688273be6fdc43585440",
-  measurementId: "G-MKQZ4VBGMB"
-};
+            apiKey: "TA_CLE_API_ICI",
+            authDomain: "TON_PROJET.firebaseapp.com",
+            projectId: "TON_PROJET_ID",
+            storageBucket: "TON_PROJET.appspot.com",
+            messagingSenderId: "TON_ID_MESSAGERIE",
+            appId: "TON_APP_ID"
+        };
 
         let app, auth, db;
         const isDemoMode = !firebaseConfig.apiKey || firebaseConfig.apiKey.includes("TA_CLE");
@@ -131,67 +125,84 @@
         // --- COMPOSANT FACTURE CLIENT ---
         const InvoiceModal = ({ report, onClose }) => {
             if (!report) return null;
+            
+            const materialLabel = report.materialsList && report.materialsList.trim() !== '' 
+                ? report.materialsList 
+                : "Fournitures diverses et consommables";
+
             return (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 modal-print-area">
-                    <div className="bg-white w-full max-w-2xl rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh] text-left">
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-2xl rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh] text-left modal-print-area">
                         <div className="p-6 border-b flex justify-between items-center bg-gray-50 no-print">
                             <h2 className="font-black text-xl text-gray-800 uppercase text-center flex-1 ml-8">Facture Client</h2>
                             <button onClick={onClose} className="p-2 bg-white rounded-full shadow-sm hover:bg-gray-100 transition-all"><X size={20}/></button>
                         </div>
-                        <div className="p-10 overflow-y-auto bg-white flex-1 text-gray-800 text-left print:p-0">
+                        
+                        <div className="p-10 overflow-y-auto bg-white flex-1 text-gray-800 text-left">
                             <div className="flex justify-between mb-12 items-start">
                                 <div className="w-1/2">
                                     <img src={LOGO_URL} className="h-24 object-contain mb-4" alt="Logo" />
-                                    <div className="text-sm text-black-force">
+                                    <div className="text-sm print-text-black">
                                         <p className="font-bold uppercase">Votre Entreprise</p>
                                         <p>Canton de Vaud, Suisse</p>
                                     </div>
                                 </div>
                                 <div className="text-right w-1/2">
-                                    <h1 className="text-3xl font-black mb-2 text-black-force">FACTURE</h1>
-                                    <p className="font-bold text-gray-500 text-black-force uppercase">REF: {(report.id || '').substring(0,6).toUpperCase()}</p>
-                                    <p className="text-gray-500 text-black-force">Date: {formatDate(report.date)}</p>
-                                    <div className="mt-6 border p-4 text-left rounded bg-gray-50 print:bg-white print:border-black border-black-force">
-                                        <p className="text-[10px] font-bold text-gray-400 uppercase text-black-force">Client :</p>
-                                        <p className="text-xl font-bold text-black-force">{report.clientName}</p>
+                                    <h1 className="text-3xl font-black mb-2 print-text-black">FACTURE</h1>
+                                    <p className="font-bold text-gray-500 print-text-black uppercase">REF: {(report.id || '').substring(0,6).toUpperCase()}</p>
+                                    <p className="text-gray-500 print-text-black">Date: {formatDate(report.date)}</p>
+                                    <div className="mt-6 border p-4 text-left rounded bg-gray-50 print-bg-white print-border-black border-gray-200">
+                                        <p className="text-[10px] font-bold text-gray-400 uppercase print-text-black">Client :</p>
+                                        <p className="text-xl font-bold print-text-black">{report.clientName}</p>
                                     </div>
                                 </div>
                             </div>
-                            <table className="w-full mb-10 text-sm">
+                            <table className="w-full mb-10 text-sm table-fixed">
                                 <thead>
-                                    <tr className="border-b-2 border-black font-bold uppercase text-xs text-left text-black-force">
-                                        <th className="py-2 w-3/5">Prestation</th>
-                                        <th className="py-2 text-center">Qté</th>
-                                        <th className="py-2 text-right">Total HT</th>
+                                    <tr className="border-b-2 border-black font-bold uppercase text-xs text-left print-text-black">
+                                        <th className="py-2 text-left w-[55%]">Prestation</th>
+                                        <th className="py-2 text-center w-[15%]">Qté</th>
+                                        {/* LARGEUR FIXE POUR ALIGNEMENT PARFAIT */}
+                                        <th className="py-2 text-right w-[30%]">Total HT</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr className="border-b border-gray-100 border-black-force">
-                                        <td className="py-4">
-                                            <span className="font-bold block text-black-force uppercase tracking-tight">{report.taskType} — <span className="font-normal text-gray-500 text-black-force lowercase">Intervenant: {report.technician}</span></span>
+                                    <tr className="border-b border-gray-100 print-border-black">
+                                        <td className="py-4 align-middle">
+                                            <div className="flex flex-col">
+                                                <span className="font-bold print-text-black uppercase tracking-tight text-base mb-1">{report.taskType}</span>
+                                                <span className="text-xs text-gray-500 print-text-black">
+                                                    Intervenant : <span className="font-semibold text-gray-700 print-text-black">{report.technician}</span>
+                                                </span>
+                                            </div>
                                         </td>
-                                        <td className="py-4 text-center text-black-force">{report.hours} h</td>
-                                        <td className="py-4 text-right font-bold text-black-force whitespace-nowrap">{formatMoney(report.laborTotal)} .-</td>
+                                        <td className="py-4 text-center print-text-black align-middle">{report.hours} h</td>
+                                        <td className="py-4 text-right font-bold print-text-black whitespace-nowrap align-middle tabular-nums">{formatMoney(report.laborTotal)}.-</td>
                                     </tr>
                                     {report.materialsCost > 0 && (
-                                        <tr className="border-b border-gray-100 border-black-force">
-                                            <td className="py-4 font-bold text-black-force">Fournitures : <span className="font-normal text-gray-500 text-black-force italic text-xs">{report.materialsList}</span></td>
-                                            <td className="py-4 text-center text-black-force">1</td>
-                                            <td className="py-4 text-right font-bold text-black-force whitespace-nowrap">{formatMoney(report.materialsCost * MARGIN_MULTIPLIER)} .-</td>
+                                        <tr className="border-b border-gray-100 print-border-black">
+                                            <td className="py-4 font-bold print-text-black align-middle">
+                                                Fournitures
+                                                <div className="font-normal text-gray-500 print-text-black italic text-xs mt-1">
+                                                    {materialLabel}
+                                                </div>
+                                            </td>
+                                            <td className="py-4 text-center print-text-black align-middle">1</td>
+                                            <td className="py-4 text-right font-bold print-text-black whitespace-nowrap align-middle tabular-nums">{formatMoney(report.materialsCost * MARGIN_MULTIPLIER)}.-</td>
                                         </tr>
                                     )}
-                                    <tr className="border-black-force">
-                                        <td className="py-4 font-bold text-black-force">Frais de déplacement ({report.zone})</td>
-                                        <td className="py-4 text-center text-black-force">1</td>
-                                        <td className="py-4 text-right font-bold text-black-force whitespace-nowrap">{formatMoney(report.travelFee)} .-</td>
+                                    <tr className="print-border-black">
+                                        <td className="py-4 font-bold print-text-black align-middle">Frais de déplacement ({report.zone})</td>
+                                        <td className="py-4 text-center print-text-black align-middle">1</td>
+                                        <td className="py-4 text-right font-bold print-text-black whitespace-nowrap align-middle tabular-nums">{formatMoney(report.travelFee)}.-</td>
                                     </tr>
                                 </tbody>
                             </table>
-                            <div className="flex justify-end pt-6 border-t-2 border-black border-black-force">
-                                <div className="w-full sm:w-1/2 text-right text-black-force">
-                                    <div className="flex justify-between py-1"><span>Total HT</span><span className="font-bold">{formatMoney(report.grandTotal)} CHF</span></div>
-                                    <div className="flex justify-between py-1"><span>TVA (8.1%)</span><span className="font-bold">{formatMoney(report.grandTotal * 0.081)} CHF</span></div>
-                                    <div className="flex justify-between py-2 mt-2 text-xl font-black border-t border-black border-black-force"><span>TOTAL TTC</span><span>{formatMoney(report.grandTotal * 1.081)} CHF</span></div>
+                            <div className="flex justify-end pt-6 border-t-2 border-black">
+                                <div className="w-full sm:w-1/2 text-right print-text-black">
+                                    <div className="flex justify-between py-1"><span>Total HT</span><span className="font-bold tabular-nums">{formatMoney(report.grandTotal)} CHF</span></div>
+                                    <div className="flex justify-between py-1"><span>TVA (8.1%)</span><span className="font-bold tabular-nums">{formatMoney(report.grandTotal * 0.081)} CHF</span></div>
+                                    <div className="flex justify-between py-2 mt-2 text-xl font-black border-t border-black"><span>TOTAL TTC</span><span className="tabular-nums">{formatMoney(report.grandTotal * 1.081)} CHF</span></div>
                                 </div>
                             </div>
                         </div>
@@ -380,7 +391,7 @@
                             </div>
 
                             <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 text-center">
-                                <h3 className="text-gray-400 text-[10px] font-black uppercase mb-4 flex justify-center items-center gap-2"><MapPin size={12} className="text-blue-500" /> Zone</h3>
+                                <h3 className="text-gray-400 text-[10px] font-black uppercase mb-6 flex justify-center items-center gap-2"><MapPin size={12} className="text-blue-500" /> Zone</h3>
                                 <div className="grid grid-cols-3 gap-2 px-1">{Object.entries(TRAVEL_FEES).map(([z, data]) => (<button key={z} type="button" onClick={() => setFormData(p => ({...p, zone: z}))} className={`py-4 rounded-2xl border transition-all ${formData.zone === z ? 'bg-blue-600 border-blue-600 text-white shadow-lg scale-105' : 'bg-gray-50 border-gray-100 text-gray-400 hover:bg-gray-100'}`}><div className="text-[10px] font-black uppercase">{z}</div><div className="text-[8px] font-bold opacity-80 leading-tight uppercase">{data.label}</div><div className="text-sm font-black mt-1">{data.fee}.-</div></button>))}</div>
                             </div>
 
@@ -414,14 +425,15 @@
                                         
                                         {/* MILIEU GAUCHE : CLIENT & TECH (ALIGNE A GAUCHE) */}
                                         <div onClick={() => setSelectedReport(r)} className="flex-1 min-w-0 text-left cursor-pointer flex flex-col justify-center">
-                                            <h4 className="font-black text-gray-800 text-lg uppercase truncate leading-tight">{r.clientName || 'Inconnu'}</h4>
+                                            {/* NOM EN ENTIER : J'ai mis whitespace-normal et h-auto pour permettre l'agrandissement */}
+                                            <h4 className="font-black text-gray-800 text-lg uppercase leading-tight whitespace-normal break-words h-auto">{r.clientName || 'Inconnu'}</h4>
                                             <div className="flex items-center gap-2 mt-1 flex-wrap">
                                                 <span className="text-[9px] bg-slate-100 text-slate-500 font-black px-2 py-0.5 rounded uppercase">{r.technician}</span>
                                                 <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase ${stl.badge}`}>{r.taskType}</span>
                                             </div>
                                         </div>
 
-                                        {/* MILIEU DROITE : PRIX & DATE (COLONNE FIXE LARGEUR 130PX POUR PRIX STABLE) */}
+                                        {/* MILIEU DROITE : PRIX & DATE */}
                                         <div onClick={() => setSelectedReport(r)} className="text-right shrink-0 pr-4 border-r border-gray-100 w-[130px] cursor-pointer flex flex-col justify-center">
                                             <p className="font-black text-blue-600 text-lg tabular-nums leading-none mb-1 whitespace-nowrap">
                                                 {formatMoney(r.grandTotal)} .-
@@ -429,7 +441,7 @@
                                             <p className="text-[9px] text-gray-400 font-black uppercase tracking-tighter leading-none">{formatDate(r.date)}</p>
                                         </div>
 
-                                        {/* DROITE : ACTIONS VERTICALES (COLONNE FIXE LARGEUR 45PX) */}
+                                        {/* DROITE : ACTIONS */}
                                         <div className="flex flex-col gap-2 shrink-0 w-[45px] items-center justify-center ml-auto">
                                             <button onClick={(e) => { e.stopPropagation(); handleEdit(r); }} title="Modifier" className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-600 hover:text-white transition-all active:scale-90 shadow-sm"><Edit size={14} /></button>
                                             <button onClick={(e) => { e.stopPropagation(); setReportToDelete(r.id); }} title="Supprimer" className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-600 hover:text-white transition-all active:scale-90 shadow-sm"><Trash2 size={14} /></button>
@@ -452,16 +464,21 @@
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[120] flex items-center justify-center p-4 modal-root">
                         <div className="bg-white w-full max-w-4xl rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh] modal-content modal-print-area">
                             <div className="p-6 border-b flex justify-between items-center bg-gray-50 no-print">
-                                <h2 className="font-black text-xl text-gray-800 uppercase text-center flex-1 ml-8 text-black-force">Rapport Fiduciaire</h2>
+                                <h2 className="font-black text-xl text-gray-800 uppercase text-center flex-1 ml-8 print-text-black">Rapport Fiduciaire</h2>
                                 <button onClick={() => setIsSummaryOpen(false)} className="p-2 bg-white rounded-full shadow-sm hover:bg-gray-100 transition-all"><X size={20}/></button>
                             </div>
-                            <div className="p-8 overflow-y-auto bg-white flex-1 text-gray-800 text-left print:p-10">
-                                <h1 className="text-2xl font-black text-blue-600 uppercase mb-8 text-black-force text-center">Liste des Interventions</h1>
+                            <div className="p-8 overflow-y-auto bg-white flex-1 text-gray-800 text-left">
+                                <h1 className="text-2xl font-black text-blue-600 uppercase mb-8 text-center print-text-black">Liste des Interventions</h1>
                                 <table className="w-full text-left text-sm border-collapse">
-                                    <thead><tr className="border-b-2 border-black font-black uppercase text-gray-400 text-black-force"><th className="py-3 px-2">Date</th><th className="py-3 px-2 text-center">Client</th><th className="py-3 px-2 text-right">Total HT</th></tr></thead>
-                                    <tbody>{reports.map((r, i) => (<tr key={i} className="border-b border-gray-50 border-black-force text-black-force"><td className="py-3 px-2">{formatDate(r.date)}</td><td className="py-3 px-2 text-center uppercase font-bold">{r.clientName}</td><td className="py-3 px-2 text-right font-black tabular-nums whitespace-nowrap">{formatMoney(r.grandTotal)} .-</td></tr>))}</tbody>
+                                    <thead><tr className="border-b-2 border-black font-black uppercase text-gray-400 print-text-black"><th className="py-3 px-2">Date</th><th className="py-3 px-2 text-center">Client</th><th className="py-3 px-2 text-right">Total HT</th></tr></thead>
+                                    <tbody>{reports.map((r, i) => (<tr key={i} className="border-b border-gray-50 print-border-black"><td className="py-3 px-2 print-text-black">{formatDate(r.date)}</td><td className="py-3 px-2 text-center uppercase font-bold print-text-black">{r.clientName}</td><td className="py-3 px-2 text-right font-black tabular-nums whitespace-nowrap print-text-black">{formatMoney(r.grandTotal)} .-</td></tr>))}</tbody>
                                 </table>
-                                <div className="flex justify-end mt-12"><div className="w-64 bg-blue-900 text-white p-6 rounded-3xl text-right shadow-xl print:bg-white print:text-black print:border print:border-black border-black-force"><p className="text-[10px] uppercase opacity-60 font-black mb-1 print:text-black">CUMUL GÉNÉRAL HT</p><p className="text-2xl font-black tabular-nums">{formatMoney(reports.reduce((a,c) => a+(c.grandTotal||0),0))} .-</p></div></div>
+                                <div className="flex justify-end mt-12">
+                                    <div className="w-64 bg-blue-900 text-white p-6 rounded-3xl text-right shadow-xl print-bg-white print-text-black print-border-black print:border">
+                                        <p className="text-[10px] uppercase opacity-60 font-black mb-1 print-text-black">CUMUL GÉNÉRAL HT</p>
+                                        <p className="text-2xl font-black tabular-nums print-text-black">{formatMoney(reports.reduce((a,c) => a+(c.grandTotal||0),0))} .-</p>
+                                    </div>
+                                </div>
                             </div>
                             <div className="p-6 border-t bg-gray-50 no-print"><button onClick={() => window.print()} className="w-full bg-blue-600 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all shadow-lg hover:bg-blue-700"><Printer size={20}/> Imprimer Rapport</button></div>
                         </div>
@@ -496,4 +513,5 @@
     </script>
 </body>
 </html>
+
 
